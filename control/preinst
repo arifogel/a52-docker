@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [ upgrade != "$1" ]; then
+  dpkg-divert \
+    --package libasound2-plugins-a52 \
+    --add \
+    --rename \
+    --divert /usr/lib/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_a52.so.orig \
+    /usr/lib/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_a52.so
+fi
+

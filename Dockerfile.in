@@ -1,0 +1,90 @@
+FROM ubuntu:${UBUNTU_VERSION}
+
+User root
+
+WORKDIR /root/workdir
+
+RUN sed -i -e 's/# *deb-src/deb-src/g' /etc/apt/sources.list
+
+# Download files and install dependencies
+RUN apt-get update \
+&& apt-get install bzip2 zstd \
+&& apt-get -y build-dep "libasound2-plugins=${LIBASOUND2_PLUGINS_VERSION}" \
+&& apt-get download "libasound2-plugins=${LIBASOUND2_PLUGINS_VERSION}" \
+&& mkdir build \
+&& cd build \
+&& apt-get source "libasound2-plugins=${LIBASOUND2_PLUGINS_VERSION}" \
+&& rm -rf /var/lib/apt/lists/* \
+&& apt-get clean
+
+# Build and copy library
+RUN cd build/alsa-plugins-* \
+&& ./configure \
+&& libtoolize --force --copy \
+&& aclocal \
+&& autoconf \
+&& automake --add-missing \
+&& make \
+&& cd a52/.libs \
+&& mkdir -p /root/workdir/dist/usr/lib/x86_64-linux-gnu/alsa-lib/ \
+&& install \
+    -m 0644 \
+    libasound_module_pcm_a52.so \
+    /root/workdir/dist/usr/lib/x86_64-linux-gnu/alsa-lib/ \
+&& strip /root/workdir/dist/usr/lib/x86_64-linux-gnu/alsa-lib/libasound_module_pcm_a52.so \
+&& cd /root/workdir \
+&& rm -rf build
+
+# Extract deb and copy needed parts
+RUN mkdir -p \
+      deb/control \
+      deb/data \
+&& cd deb \
+&& ar x ../*.deb \
+&& cd control \
+&& tar -xf ../control.tar.* \
+&& cd .. \
+&& cd  data \
+&& tar -xf ../data.tar.* \
+&& cd .. \
+&& mkdir -p /root/workdir/dist/usr/share/doc/libasound2-plugins-a52 \
+&& install \
+    -m 0644 \
+    data/usr/share/doc/libasound2-plugins/changelog.Debian.gz \
+    data/usr/share/doc/libasound2-plugins/copyright \
+    /root/workdir/dist/usr/share/doc/libasound2-plugins-a52/
+
+# Create data tarball
+COPY dist /root/workdir/dist
+RUN cd dist \
+&& find -type f -exec chmod 0644 {} \; \
+&& find -type d -exec chmod 0755 {} \; \
+&& tar -c --zstd -f /root/workdir/data.tar.zst *
+
+# Create/Update control files and tarball
+COPY control /root/workdir/deb/control
+
+RUN cd /root/workdir/dist \
+&& find etc -type f \
+   | sort \
+   | sed -e 's#^#/#g' \
+   > /root/workdir/deb/control/conffiles \
+&& find -type f -exec md5sum {} \; \
+   > /root/workdir/deb/control/md5sums \
+&& cd ../deb/control \
+&& chmod 0755 preinst postrm
+
+RUN cd /root/workdir/deb/control \
+&& sed -i -e 's/^Package:.*/Package: libasound2-plugins-a52/g' control \
+&& sed -i -e 's/^Depends: \(.*\)/Depends: libasound2-plugins (>= ${LIBASOUND2_PLUGINS_VERSION}), \1/g' control \
+&& tar -c --zstd -f /root/workdir/control.tar.zst *
+
+# Copy debian-binary
+RUN cp deb/debian-binary .
+
+# Create deb
+RUN ar q "${DEB_FILE}" \
+  debian-binary \
+  control.tar.zst \
+  data.tar.zst
+
